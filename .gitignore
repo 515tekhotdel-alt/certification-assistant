@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+.Python
+env/
+venv/
+.venv/
+ENV/
+*.egg-info/
+dist/
+build/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Environment variables
+.env
+
+# Streamlit
+.streamlit/secrets.toml
+
+# Data files (если большие)
+*.csv
+!data/certificates_example.csv
