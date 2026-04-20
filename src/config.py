@@ -16,7 +16,8 @@ CERTIFICATES_FILE = DATA_DIR / "certificates.xlsx"
 
 # API ключи
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL = "gemini-2.0-flash"
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+DEEPSEEK_MODEL = "deepseek-chat"
 
 # Настройки поиска
 SIMILARITY_THRESHOLD = 0.85  # Порог для признания точного совпадения
