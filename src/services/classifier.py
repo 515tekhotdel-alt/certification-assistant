@@ -1,5 +1,5 @@
 """
-Основной сервис классификации — объединяет поиск по базе и DeepSeek
+Основной сервис классификации — анализ группы сертификатов со статистикой
 """
 
 import sys
@@ -8,148 +8,142 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 import pandas as pd
-from src.database.searcher import CertificateSearcher
+from collections import Counter
+
+from src.database.loader import DataLoader
 from src.models.deepseek_client import DeepSeekClient
-from src.config import COLUMN_MAPPING, SIMILARITY_THRESHOLD
+from src.config import COLUMN_MAPPING
 
 
 class CertificationAssistant:
-    """Основной класс помощника эксперта по сертификации"""
+    """Помощник эксперта по сертификации с анализом частоты стандартов"""
 
     def __init__(self):
-        self.searcher = CertificateSearcher()
+        self.loader = DataLoader()
+        self.df = self.loader.get_dataframe()
         self.deepseek = DeepSeekClient()
-        self.df = self.searcher.df
+        self.all_products = self.loader.get_product_names()
 
     def process_query(self, product_query: str, regulation: str = "", tnved: str = "") -> dict:
         """
         Обрабатывает запрос эксперта.
 
-        Args:
-            product_query: описание продукции
-            regulation: технический регламент (опционально)
-            tnved: первые 4 цифры ТНВЭД (опционально)
-
         Returns:
-            dict с результатом поиска
+            dict с результатами анализа группы сертификатов
         """
-        # Шаг 1: локальный поиск по базе (SequenceMatcher)
-        local_results = self.searcher.search_by_product(product_query)
+        # Шаг 1: поиск релевантных индексов через DeepSeek
+        relevant_indices = self.deepseek.find_relevant_indices(product_query, self.all_products)
 
-        # Шаг 2: применяем фильтры
+        if not relevant_indices:
+            return {
+                "found": False,
+                "source": "none",
+                "message": "По вашему запросу ничего не найдено.",
+                "certificates_count": 0,
+                "total_relevant": 0,
+                "standards": [],
+                "recommended_standards": [],
+                "products_sample": [],
+                "regulations": []
+            }
+
+        # Шаг 2: получаем строки из DataFrame
+        indices = [r["index"] for r in relevant_indices]
+        matched_rows = self.df.iloc[indices].copy()
+        matched_rows["_match_confidence"] = [r["confidence"] for r in relevant_indices]
+
+        # Шаг 3: фильтрация по регламенту и ТНВЭД
         if regulation:
-            local_results = self.searcher.filter_by_regulation(local_results, regulation)
-        if tnved:
-            local_results = self.searcher.filter_by_tnved(local_results, tnved)
+            matched_rows = matched_rows[
+                matched_rows[COLUMN_MAPPING["regulations"]].fillna("").str.contains(regulation, na=False)
+            ]
 
-        # Шаг 3: проверяем, есть ли точное совпадение
-        best_local = self.searcher.get_best_match(local_results)
+        if tnved and len(tnved) >= 4:
+            matched_rows = matched_rows[
+                matched_rows[COLUMN_MAPPING["tnved"]].fillna("").str[:4] == tnved[:4]
+                ]
 
-        if best_local and best_local["similarity"] >= SIMILARITY_THRESHOLD:
-            # Найден точный прецедент
-            return self._format_result(best_local, source="precedent")
+        if matched_rows.empty:
+            return {
+                "found": False,
+                "source": "filtered_out",
+                "message": f"Найдено {len(relevant_indices)} похожих сертификатов, но ни один не прошёл фильтры.",
+                "certificates_count": 0,
+                "total_relevant": len(relevant_indices),
+                "standards": [],
+                "recommended_standards": [],
+                "products_sample": [],
+                "regulations": []
+            }
 
-        # Шаг 4: точного совпадения нет — используем DeepSeek
-        if local_results:
-            # Если есть хоть какие-то кандидаты — уточняем через DeepSeek
-            products = [r["product"] for r in local_results[:10]]
-            ai_match = self.deepseek.find_best_match(product_query, products)
+        # Шаг 4: анализ стандартов
+        standards_stats = self._analyze_standards(matched_rows)
 
-            if ai_match["index"] >= 0:
-                # Нашли соответствие среди кандидатов
-                matched_product = ai_match["product"]
-                # Ищем полную строку в local_results
-                for r in local_results:
-                    if r["product"] == matched_product:
-                        return self._format_result(r, source="ai_assisted")
-        else:
-            # Кандидатов нет — ищем по всем продуктам через DeepSeek
-            all_products = self.searcher.loader.get_product_names()
-            ai_match = self.deepseek.find_best_match(product_query, all_products)
-            if ai_match["index"] >= 0:
-                row = self.df.iloc[ai_match["index"]]
-                result = {
-                    "index": ai_match["index"],
-                    "similarity": ai_match["confidence"],
-                    "product": ai_match["product"],
-                    "row": row
-                }
-                return self._format_result(result, source="ai_only")
-
-        # Шаг 5: ничего не нашли
-        return {
-            "found": False,
-            "source": "none",
-            "message": "По вашему запросу ничего не найдено. Попробуйте изменить описание продукции."
-        }
-
-    def _format_result(self, result: dict, source: str) -> dict:
-        """Форматирует результат для вывода"""
-        row = result["row"]
-
-        # Парсим стандарты
-        standards_des = str(row[COLUMN_MAPPING["standards_designation"]]) if pd.notna(
-            row[COLUMN_MAPPING["standards_designation"]]) else ""
-        standards_name = str(row[COLUMN_MAPPING["standards_name"]]) if pd.notna(
-            row[COLUMN_MAPPING["standards_name"]]) else ""
-
-        des_list = [s.strip() for s in standards_des.split(";") if s.strip()]
-        name_list = [s.strip() for s in standards_name.split(";") if s.strip()]
-
-        # Объединяем обозначения и названия
-        standards = []
-        for i, des in enumerate(des_list):
-            name = name_list[i] if i < len(name_list) else ""
-            standards.append({"designation": des, "name": name})
-
+        # Шаг 5: формирование результата
         return {
             "found": True,
-            "source": source,
-            "product": result["product"],
-            "similarity": result["similarity"],
-            "certificate_number": str(row[COLUMN_MAPPING["number"]]) if pd.notna(row[COLUMN_MAPPING["number"]]) else "",
-            "certificate_date": str(row[COLUMN_MAPPING["date"]]) if pd.notna(row[COLUMN_MAPPING["date"]]) else "",
-            "regulations": str(row[COLUMN_MAPPING["regulations"]]) if pd.notna(
-                row[COLUMN_MAPPING["regulations"]]) else "",
-            "tnved": str(row[COLUMN_MAPPING["tnved"]]) if pd.notna(row[COLUMN_MAPPING["tnved"]]) else "",
-            "standards": standards,
-            "standards_count": len(standards)
+            "source": "group_analysis",
+            "query": product_query,
+            "certificates_count": len(matched_rows),
+            "total_relevant": len(relevant_indices),
+            "products_sample": matched_rows[COLUMN_MAPPING["product"]].head(5).tolist(),
+            "regulations": self._get_unique_values(matched_rows, "regulations"),
+            "standards": standards_stats,
+            "recommended_standards": self._get_recommended_standards(standards_stats, threshold=0.5)
         }
+
+    def _analyze_standards(self, df: pd.DataFrame) -> list:
+        """Анализирует частоту стандартов в группе сертификатов"""
+        total = len(df)
+        standards_counter = Counter()
+        standards_names = {}
+
+        des_col = COLUMN_MAPPING["standards_designation"]
+        name_col = COLUMN_MAPPING["standards_name"]
+
+        for _, row in df.iterrows():
+            des_str = str(row[des_col]) if pd.notna(row[des_col]) else ""
+            name_str = str(row[name_col]) if pd.notna(row[name_col]) else ""
+
+            des_list = [d.strip() for d in des_str.split(";") if d.strip()]
+            name_list = [n.strip() for n in name_str.split(";") if n.strip()]
+
+            for i, des in enumerate(des_list):
+                standards_counter[des] += 1
+                if des not in standards_names and i < len(name_list):
+                    standards_names[des] = name_list[i]
+
+        # Формируем отсортированный список с частотами
+        result = []
+        for des, count in standards_counter.most_common():
+            result.append({
+                "designation": des,
+                "name": standards_names.get(des, ""),
+                "count": count,
+                "frequency": count / total
+            })
+
+        return result
+
+    def _get_recommended_standards(self, standards_stats: list, threshold: float = 0.5) -> list:
+        """Возвращает стандарты с частотой выше порога"""
+        return [s for s in standards_stats if s["frequency"] >= threshold]
+
+    def _get_unique_values(self, df: pd.DataFrame, col_key: str) -> list:
+        """Возвращает уникальные значения из колонки"""
+        col = COLUMN_MAPPING[col_key]
+        values = set()
+        for val in df[col].dropna():
+            for v in str(val).split(";"):
+                if v.strip():
+                    values.add(v.strip())
+        return sorted(list(values))
 
     def get_source_label(self, source: str) -> tuple:
-        """Возвращает метку и эмодзи для источника"""
+        """Возвращает метку для источника"""
         labels = {
-            "precedent": ("✅ ПРЕЦЕДЕНТ", "success"),
-            "ai_assisted": ("🤖 НАЙДЕНО ИИ (среди похожих)", "info"),
-            "ai_only": ("⚠️ ПРЕДПОЛОЖЕНИЕ ИИ (требуется проверка)", "warning"),
-            "none": ("❌ НЕ НАЙДЕНО", "error")
+            "group_analysis": ("📊 АНАЛИЗ ГРУППЫ СЕРТИФИКАТОВ", "success"),
+            "none": ("❌ НЕ НАЙДЕНО", "error"),
+            "filtered_out": ("⚠️ НЕ ПРОШЛИ ФИЛЬТРЫ", "warning")
         }
         return labels.get(source, ("", "info"))
-
-
-# Тестирование
-if __name__ == "__main__":
-    assistant = CertificationAssistant()
-
-    print("=" * 60)
-    print("🧪 ТЕСТИРОВАНИЕ ПОМОЩНИКА СЕРТИФИКАЦИИ")
-    print("=" * 60)
-
-    test_queries = [
-        ("пылесос", "", ""),
-        ("ноутбук", "ТР ТС 004/2011", ""),
-        ("светильник", "", ""),
-    ]
-
-    for query, reg, tnved in test_queries:
-        print(f"\n🔍 Запрос: '{query}'")
-        result = assistant.process_query(query, reg, tnved)
-
-        if result["found"]:
-            label, _ = assistant.get_source_label(result["source"])
-            print(f"   {label}")
-            print(f"   Продукция: {result['product'][:70]}...")
-            print(f"   Сертификат: {result['certificate_number']}")
-            print(f"   Стандартов: {result['standards_count']}")
-        else:
-            print(f"   {result['message']}")

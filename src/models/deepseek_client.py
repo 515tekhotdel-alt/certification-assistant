@@ -1,8 +1,10 @@
 """
 Клиент для работы с DeepSeek API
+Задача: найти ВСЕ строки в таблице, соответствующие запросу
 """
 
 import sys
+import json
 import re
 from pathlib import Path
 
@@ -13,26 +15,32 @@ from src.config import DEEPSEEK_API_KEY, DEEPSEEK_MODEL
 
 
 class DeepSeekClient:
-    """Класс для семантического поиска по наименованиям продукции через DeepSeek"""
+    """Класс для семантического поиска релевантных строк по запросу"""
 
     def __init__(self):
         self.api_key = DEEPSEEK_API_KEY
         self.model = DEEPSEEK_MODEL
         self.base_url = "https://api.deepseek.com/v1/chat/completions"
 
-    def find_best_match(self, query: str, products: list) -> dict:
+    def find_relevant_indices(self, query: str, products: list) -> list:
         """
-        Находит наиболее подходящее наименование продукции из списка.
-        Использует двухэтапный подход: сначала отбираем кандидатов локально, потом уточняем через API.
+        Находит ВСЕ индексы продуктов, соответствующих запросу.
+
+        Args:
+            query: поисковый запрос
+            products: полный список наименований продукции (9492 строки)
+
+        Returns:
+            list of dict: [{"index": int, "product": str, "confidence": float}, ...]
         """
-        # Этап 1: локальный отбор кандидатов (первые 5 по простому совпадению слов)
-        candidates = self._get_candidates(query, products, top_n=5)
+        # Шаг 1: локальный отбор кандидатов по ключевым словам (быстрый фильтр)
+        candidates = self._get_candidates_by_keywords(query, products, top_n=30)
 
         if not candidates:
-            return {"index": -1, "product": "", "confidence": 0.0}
+            return []
 
-        # Этап 2: уточнение через DeepSeek
-        prompt = self._build_prompt(query, candidates)
+        # Шаг 2: отправляем кандидатов в DeepSeek для точного отбора
+        prompt = self._build_batch_prompt(query, candidates)
 
         try:
             response = requests.post(
@@ -45,7 +53,7 @@ class DeepSeekClient:
                     "model": self.model,
                     "messages": [{"role": "user", "content": prompt}],
                     "temperature": 0.1,
-                    "max_tokens": 10
+                    "max_tokens": 200
                 },
                 timeout=30
             )
@@ -53,17 +61,17 @@ class DeepSeekClient:
             if response.status_code == 200:
                 result = response.json()
                 answer = result["choices"][0]["message"]["content"]
-                return self._parse_response(answer, candidates, products)
+                return self._parse_batch_response(answer, candidates)
             else:
                 print(f"❌ DeepSeek API error: {response.status_code}")
-                return {"index": -1, "product": "", "confidence": 0.0}
+                return []
 
         except Exception as e:
             print(f"❌ DeepSeek request error: {e}")
-            return {"index": -1, "product": "", "confidence": 0.0}
+            return []
 
-    def _get_candidates(self, query: str, products: list, top_n: int = 5) -> list:
-        """Локальный отбор кандидатов по ключевым словам"""
+    def _get_candidates_by_keywords(self, query: str, products: list, top_n: int = 30) -> list:
+        """Быстрый локальный отбор по ключевым словам"""
         query_words = set(query.lower().split())
         scored = []
 
@@ -71,42 +79,66 @@ class DeepSeekClient:
             if not product:
                 continue
             product_lower = str(product).lower()
-            # Простой scoring: количество совпавших слов
             score = sum(1 for word in query_words if word in product_lower)
             if score > 0:
                 scored.append((idx, product, score))
 
-        # Сортируем по score и берём top_n
         scored.sort(key=lambda x: x[2], reverse=True)
         return [(idx, product) for idx, product, _ in scored[:top_n]]
 
-    def _build_prompt(self, query: str, candidates: list) -> str:
-        """Создаёт промпт для DeepSeek с малым числом кандидатов"""
+    def _build_batch_prompt(self, query: str, candidates: list) -> str:
+        """Промпт для отбора всех подходящих вариантов"""
         lines = []
         for i, (_, product) in enumerate(candidates):
-            lines.append(f"{i}: {product}")
+            # Обрезаем длинные названия для читаемости
+            short_product = product[:80] + "..." if len(product) > 80 else product
+            lines.append(f"{i}: {short_product}")
 
-        prompt = f"""Найди товар, наиболее похожий на "{query}".
+        prompt = f"""Найди ВСЕ товары из списка, которые соответствуют запросу: "{query}".
 
+Список:
 {chr(10).join(lines)}
 
-Ответь только номером (0-{len(candidates) - 1})."""
+Верни ТОЛЬКО JSON-массив с номерами подходящих товаров.
+Пример ответа: [0, 3, 7]
+
+Если ничего не подходит, верни: []"""
         return prompt
 
-    def _parse_response(self, answer: str, candidates: list, all_products: list) -> dict:
-        """Парсит ответ DeepSeek"""
-        match = re.search(r'[0-4]', answer)
+    def _parse_batch_response(self, answer: str, candidates: list) -> list:
+        """Парсит ответ с массивом индексов"""
+        # Ищем JSON-массив в ответе
+        match = re.search(r'\[.*?\]', answer, re.DOTALL)
         if match:
-            candidate_idx = int(match.group())
-            if 0 <= candidate_idx < len(candidates):
-                original_idx = candidates[candidate_idx][0]
-                return {
-                    "index": original_idx,
-                    "product": all_products[original_idx],
-                    "confidence": 0.9
-                }
+            try:
+                indices = json.loads(match.group())
+                results = []
+                for i in indices:
+                    if isinstance(i, int) and 0 <= i < len(candidates):
+                        original_idx = candidates[i][0]
+                        results.append({
+                            "index": original_idx,
+                            "product": candidates[i][1],
+                            "confidence": 0.9
+                        })
+                return results
+            except json.JSONDecodeError:
+                pass
 
-        return {"index": -1, "product": "", "confidence": 0.0}
+        # Если не получилось распарсить JSON, ищем отдельные числа
+        numbers = re.findall(r'\b\d+\b', answer)
+        results = []
+        for num in numbers[:10]:  # максимум 10
+            i = int(num)
+            if 0 <= i < len(candidates):
+                original_idx = candidates[i][0]
+                results.append({
+                    "index": original_idx,
+                    "product": candidates[i][1],
+                    "confidence": 0.8
+                })
+
+        return results
 
     def check_balance(self) -> dict:
         """Проверка баланса API"""
@@ -135,9 +167,11 @@ if __name__ == "__main__":
     balance = client.check_balance()
     print(f"💰 Баланс доступен: {balance.get('is_available', False)}")
 
-    # Тестовые запросы
-    test_queries = ["пылесос", "чайник", "светильник", "ноутбук"]
+    # Тестовый запрос
+    query = "пылесос"
+    results = client.find_relevant_indices(query, products)
 
-    for query in test_queries:
-        result = client.find_best_match(query, products)
-        print(f"\n🔍 '{query}' → {result['product'][:60] if result['product'] else 'НЕ НАЙДЕНО'}...")
+    print(f"\n🔍 Запрос: '{query}'")
+    print(f"📊 Найдено релевантных строк: {len(results)}")
+    for r in results[:5]:
+        print(f"   - {r['product'][:60]}...")
