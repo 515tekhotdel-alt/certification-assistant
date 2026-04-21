@@ -24,112 +24,133 @@ class CertificationAssistant:
         self.df = self.loader.get_dataframe()
         self.deepseek = DeepSeekClient()
         self.all_products = self.loader.get_product_names()
+        self._last_matched_rows = None
+        self._last_query = None
 
     def _get_year_weight(self, date_str, use_weight: bool = False) -> float:
-        """Возвращает весовой коэффициент в зависимости от года сертификата"""
         if not use_weight:
             return 1.0
-
         try:
             date = pd.to_datetime(date_str)
             year = date.year
         except:
-            return 0.5  # если дата не распознана — средний вес
-
-        weights = {
-            2026: 1.0,
-            2025: 0.8,
-            2024: 0.6,
-        }
-        return weights.get(year, 0.4)  # 2023 и старше → 0.4
+            return 0.5
+        weights = {2026: 1.0, 2025: 0.8, 2024: 0.6}
+        return weights.get(year, 0.4)
 
     def process_query(self, product_query: str, regulation: str = "", tnved: str = "",
                       use_date_weight: bool = False) -> dict:
-        """
-        Обрабатывает запрос эксперта.
-
-        Args:
-            product_query: описание продукции
-            regulation: строка с регламентом (может содержать "ТР ТС 004/2011; ТР ТС 020/2011" или один из них)
-            tnved: первые 4 цифры ТНВЭД
-            use_date_weight: учитывать ли давность сертификатов
-        """
-        # Шаг 1: поиск релевантных индексов через DeepSeek
         relevant_indices = self.deepseek.find_relevant_indices(product_query, self.all_products)
 
         if not relevant_indices:
             return {
-                "found": False,
-                "source": "none",
+                "found": False, "source": "none",
                 "message": "По вашему запросу ничего не найдено.",
-                "certificates_count": 0,
-                "total_relevant": 0,
-                "standards": [],
-                "recommended_standards": [],
-                "products_sample": [],
-                "regulations": []
+                "certificates_count": 0, "total_relevant": 0,
+                "standards": [], "recommended_standards": [],
+                "products_sample": [], "regulations": [],
+                "all_products_sample": [], "filtered_products_sample": []
             }
 
-        # Шаг 2: получаем строки из DataFrame
         indices = [r["index"] for r in relevant_indices]
         matched_rows = self.df.iloc[indices].copy()
         matched_rows["_match_confidence"] = [r["confidence"] for r in relevant_indices]
+        matched_rows["_original_index"] = indices
 
-        # Шаг 3: фильтрация по регламенту (логическое И для нескольких)
         if regulation:
-            # Разбиваем строку фильтра на отдельные регламенты
-            required_regs = [r.strip() for r in regulation.split(";") if r.strip()]
+            if regulation == "both":
+                def check_both(val):
+                    if pd.isna(val): return False
+                    val_str = str(val)
+                    return ("ТР ТС 004/2011" in val_str) and ("ТР ТС 020/2011" in val_str)
 
-            def contains_all_regs(val):
-                if pd.isna(val):
-                    return False
-                val_str = str(val)
-                return all(reg in val_str for reg in required_regs)
+                matched_rows = matched_rows[matched_rows[COLUMN_MAPPING["regulations"]].apply(check_both)]
+            elif regulation == "004_only":
+                def check_004_only(val):
+                    if pd.isna(val): return False
+                    val_str = str(val)
+                    return ("ТР ТС 004/2011" in val_str) and ("ТР ТС 020/2011" not in val_str)
 
-            matched_rows = matched_rows[matched_rows[COLUMN_MAPPING["regulations"]].apply(contains_all_regs)]
+                matched_rows = matched_rows[matched_rows[COLUMN_MAPPING["regulations"]].apply(check_004_only)]
+            elif regulation == "020_only":
+                def check_020_only(val):
+                    if pd.isna(val): return False
+                    val_str = str(val)
+                    return ("ТР ТС 020/2011" in val_str) and ("ТР ТС 004/2011" not in val_str)
 
-        # Шаг 4: фильтрация по ТНВЭД
+                matched_rows = matched_rows[matched_rows[COLUMN_MAPPING["regulations"]].apply(check_020_only)]
+
         if tnved and len(tnved) >= 4:
             matched_rows = matched_rows[
                 matched_rows[COLUMN_MAPPING["tnved"]].fillna("").astype(str).str[:4] == tnved[:4]
                 ]
 
+        all_products_sample = [r["product"] for r in relevant_indices]
+
         if matched_rows.empty:
             return {
-                "found": False,
-                "source": "filtered_out",
+                "found": False, "source": "filtered_out",
                 "message": f"Найдено {len(relevant_indices)} похожих сертификатов, но ни один не прошёл фильтры.",
-                "certificates_count": 0,
-                "total_relevant": len(relevant_indices),
-                "standards": [],
-                "recommended_standards": [],
-                "products_sample": [],
-                "regulations": []
+                "certificates_count": 0, "total_relevant": len(relevant_indices),
+                "standards": [], "recommended_standards": [],
+                "products_sample": [], "regulations": [],
+                "all_products_sample": all_products_sample,
+                "filtered_products_sample": []
             }
 
-        # Шаг 5: анализ стандартов (с учётом или без учёта давности)
+        self._last_matched_rows = matched_rows.reset_index(drop=True)
+        self._last_query = product_query
+
         date_col = COLUMN_MAPPING["date"]
         standards_stats = self._analyze_standards_weighted(matched_rows, date_col, use_date_weight)
 
-        # Шаг 6: формирование результата
         return {
-            "found": True,
-            "source": "group_analysis",
-            "query": product_query,
-            "certificates_count": len(matched_rows),
-            "total_relevant": len(relevant_indices),
+            "found": True, "source": "group_analysis", "query": product_query,
+            "certificates_count": len(matched_rows), "total_relevant": len(relevant_indices),
             "products_sample": matched_rows[COLUMN_MAPPING["product"]].head(5).tolist(),
+            "all_products_sample": all_products_sample,
+            "filtered_products_sample": matched_rows[COLUMN_MAPPING["product"]].tolist(),
             "regulations": self._get_unique_values(matched_rows, "regulations"),
             "standards": standards_stats,
             "recommended_standards": self._get_recommended_standards(standards_stats, threshold=0.5),
             "use_date_weight": use_date_weight
         }
 
+    def recalculate_with_selected(self, selected_products: list, use_date_weight: bool = False) -> dict:
+        """
+        Пересчитывает стандарты только по выбранным продуктам (по названиям).
+        """
+        if self._last_matched_rows is None:
+            return None
+
+        # Фильтруем по названиям продуктов
+        product_col = COLUMN_MAPPING["product"]
+        filtered_rows = self._last_matched_rows[
+            self._last_matched_rows[product_col].isin(selected_products)
+        ]
+
+        if filtered_rows.empty:
+            return None
+
+        date_col = COLUMN_MAPPING["date"]
+        standards_stats = self._analyze_standards_weighted(filtered_rows, date_col, use_date_weight)
+
+        return {
+            "found": True, "source": "group_analysis_filtered", "query": self._last_query,
+            "certificates_count": len(filtered_rows), "total_relevant": len(self._last_matched_rows),
+            "products_sample": filtered_rows[product_col].head(5).tolist(),
+            "all_products_sample": self._last_matched_rows[product_col].tolist(),
+            "filtered_products_sample": filtered_rows[product_col].tolist(),
+            "regulations": self._get_unique_values(filtered_rows, "regulations"),
+            "standards": standards_stats,
+            "recommended_standards": self._get_recommended_standards(standards_stats, threshold=0.5),
+            "use_date_weight": use_date_weight
+        }
+
     def _analyze_standards_weighted(self, df: pd.DataFrame, date_col: str, use_weight: bool) -> list:
-        """Анализирует частоту стандартов с учётом весов по дате"""
-        standards_weights = Counter()  # сумма весов для каждого стандарта
+        standards_weights = Counter()
         standards_names = {}
-        total_weight = 0.0  # общая сумма весов всех сертификатов
+        total_weight = 0.0
 
         des_col = COLUMN_MAPPING["standards_designation"]
         name_col = COLUMN_MAPPING["standards_name"]
@@ -149,7 +170,6 @@ class CertificationAssistant:
                 if des not in standards_names and i < len(name_list):
                     standards_names[des] = name_list[i]
 
-        # Формируем отсортированный список с частотами
         result = []
         for des, weight_sum in standards_weights.most_common():
             frequency = weight_sum / total_weight if total_weight > 0 else 0
@@ -157,17 +177,15 @@ class CertificationAssistant:
                 "designation": des,
                 "name": standards_names.get(des, ""),
                 "weight_sum": weight_sum,
-                "frequency": frequency
+                "frequency": frequency,
+                "count": int(weight_sum) if not use_weight else 0
             })
-
         return result
 
     def _get_recommended_standards(self, standards_stats: list, threshold: float = 0.5) -> list:
-        """Возвращает стандарты с частотой выше порога"""
         return [s for s in standards_stats if s["frequency"] >= threshold]
 
     def _get_unique_values(self, df: pd.DataFrame, col_key: str) -> list:
-        """Возвращает уникальные значения из колонки"""
         col = COLUMN_MAPPING[col_key]
         values = set()
         for val in df[col].dropna():
@@ -177,9 +195,9 @@ class CertificationAssistant:
         return sorted(list(values))
 
     def get_source_label(self, source: str) -> tuple:
-        """Возвращает метку для источника"""
         labels = {
             "group_analysis": ("📊 АНАЛИЗ ГРУППЫ СЕРТИФИКАТОВ", "success"),
+            "group_analysis_filtered": ("📊 АНАЛИЗ ВЫБРАННЫХ МОДЕЛЕЙ", "success"),
             "none": ("❌ НЕ НАЙДЕНО", "error"),
             "filtered_out": ("⚠️ НЕ ПРОШЛИ ФИЛЬТРЫ", "warning")
         }

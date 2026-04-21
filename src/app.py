@@ -12,14 +12,16 @@ import streamlit as st
 import pandas as pd
 
 from src.services.classifier import CertificationAssistant
+from src.ui.styles import apply_styles
 
-
-# Настройка страницы
 st.set_page_config(
     page_title="Помощник эксперта по сертификации",
     page_icon="📋",
     layout="wide"
 )
+
+apply_styles()
+
 
 @st.cache_resource
 def get_assistant():
@@ -34,28 +36,21 @@ def main():
     with st.spinner("Загрузка базы сертификатов..."):
         assistant = get_assistant()
 
-    # Боковая панель
-    # Боковая панель
     with st.sidebar:
         st.header("🔍 Фильтры")
 
-        # Выбор технических регламентов
-        st.subheader("📜 Технические регламенты")
-        reg_004 = st.checkbox("ТР ТС 004/2011", value=False)
-        reg_020 = st.checkbox("ТР ТС 020/2011", value=False)
+        from src.ui.components import render_regulation_selector
+        reg_mode = render_regulation_selector()
 
-        # Формируем строку фильтра для передачи в process_query
-        regulation_filter = ""
-        if reg_004 and reg_020:
-            regulation_filter = "ТР ТС 004/2011; ТР ТС 020/2011"
-        elif reg_004:
-            regulation_filter = "ТР ТС 004/2011"
-        elif reg_020:
-            regulation_filter = "ТР ТС 020/2011"
+        if reg_mode == "both":
+            regulation_filter = "both"
+        elif reg_mode == "only_004":
+            regulation_filter = "004_only"
+        else:
+            regulation_filter = "020_only"
 
         st.divider()
 
-        # ТНВЭД
         st.subheader("🔢 ТНВЭД")
         tnved = st.text_input(
             "Первые 4 цифры кода",
@@ -66,7 +61,6 @@ def main():
 
         st.divider()
 
-        # Переключатель учёта давности
         st.subheader("⚖️ Учитывать давность")
         use_date_weight = st.toggle("Включить весовые коэффициенты по году", value=False)
 
@@ -79,7 +73,6 @@ def main():
 
         st.divider()
 
-        # Частотный порог
         st.subheader("📊 Порог рекомендации")
         frequency_threshold = st.slider(
             "Минимальная частота",
@@ -89,8 +82,7 @@ def main():
 
         st.divider()
         st.caption(f"📊 В базе: {len(assistant.df):,} сертификатов")
-    # Основное поле
-    # Форма для отправки по Enter
+
     with st.form(key="search_form"):
         product_query = st.text_input(
             "Введите описание продукции:",
@@ -107,7 +99,13 @@ def main():
                 tnved=tnved,
                 use_date_weight=use_date_weight
             )
+            st.session_state.last_result = result
+            st.session_state.last_query = product_query
 
+
+    if "last_result" in st.session_state:
+        result = st.session_state.last_result
+        product_query = st.session_state.get("last_query", "")
 
         if result["found"]:
             label, label_type = assistant.get_source_label(result["source"])
@@ -117,7 +115,6 @@ def main():
             else:
                 st.info(label)
 
-            # Метрики
             col1, col2, col3 = st.columns(3)
             with col1:
                 st.metric("📦 Найдено сертификатов", result["certificates_count"])
@@ -127,59 +124,76 @@ def main():
                 recommended = [s for s in result["standards"] if s["frequency"] >= frequency_threshold]
                 st.metric("✅ Рекомендовано стандартов", len(recommended))
 
-            # Примеры продукции с чекбоксами
-            st.markdown("### 📋 Выберите подходящие модели продукции")
-            st.caption("По умолчанию выбраны все. Снимите галочки с неподходящих моделей.")
+            with st.expander("📋 Примеры найденной продукции", expanded=False):
+                for p in result["products_sample"]:
+                    st.write(f"• {p}")
 
-            # Инициализация состояния чекбоксов (по умолчанию все True)
-            if "selected_products" not in st.session_state:
-                st.session_state.selected_products = {}
-
-            # Получаем все найденные продукты (не только первые 5)
-            all_found_products = result.get("all_products_sample", result["products_sample"])
-
-            selected_indices = []
-            for i, product in enumerate(all_found_products):
-                # Создаём уникальный ключ для чекбокса
-                checkbox_key = f"product_{i}_{product[:30]}"
-                # По умолчанию True
-                if checkbox_key not in st.session_state:
-                    st.session_state[checkbox_key] = True
-
-                checked = st.checkbox(
-                    product,
-                    value=st.session_state[checkbox_key],
-                    key=checkbox_key
-                )
-                if checked:
-                    selected_indices.append(i)
-
-            # Кнопка применения выбора
-            apply_selection = st.button("🔄 Пересчитать по выбранным моделям", type="secondary")
-
-            # Технические регламенты
             if result["regulations"]:
                 st.markdown("**📜 Технические регламенты (в найденных сертификатах):**")
                 st.write(", ".join(result["regulations"]))
 
             st.markdown("---")
+            st.markdown("### 📋 Выберите подходящие модели продукции")
+            st.caption("По умолчанию выбраны все. Снимите галочки с неподходящих моделей.")
 
-            # Таблица стандартов с частотами
+            all_found_products = result.get("filtered_products_sample", result.get("all_products_sample", []))
+
+            col_all, col_none = st.columns(2)
+            with col_all:
+                if st.button("✅ Выбрать все", key=f"select_all_{product_query}", use_container_width=True):
+                    for i in range(len(all_found_products)):
+                        st.session_state[f"product_cb_{product_query}_{i}"] = True
+                    st.rerun()
+            with col_none:
+                if st.button("❌ Убрать все", key=f"select_none_{product_query}", use_container_width=True):
+                    for i in range(len(all_found_products)):
+                        st.session_state[f"product_cb_{product_query}_{i}"] = False
+                    st.rerun()
+
+            with st.container():
+                selected_products = []
+                for i, product in enumerate(all_found_products):
+                    key = f"product_cb_{product_query}_{i}"
+
+                    if key not in st.session_state:
+                        st.session_state[key] = True
+
+                    checked = st.checkbox(product, key=key)
+
+                    if checked:
+                        selected_products.append(product)
+
+            st.caption(f"Выбрано: {len(selected_products)} из {len(all_found_products)}")
+
+            if st.button("🔄 Пересчитать стандарты по выбранным моделям",
+                         key=f"recalc_{product_query}",
+                         type="secondary"):
+                if selected_products:
+                    new_result = assistant.recalculate_with_selected(
+                        selected_products,
+                        use_date_weight=use_date_weight
+                    )
+                    if new_result:
+                        st.session_state.last_result = new_result
+                        st.rerun()
+                    else:
+                        st.warning("Не удалось пересчитать. Попробуйте снова.")
+                else:
+                    st.warning("Выберите хотя бы одну модель.")
+
+            st.markdown("---")
             st.markdown("### 📊 Стандарты и частота их применения")
 
             df_standards = pd.DataFrame(result["standards"])
             df_standards["Частота"] = df_standards["frequency"].apply(lambda x: f"{x:.1%}")
             df_standards["Рекомендован"] = df_standards["frequency"] >= frequency_threshold
 
-            # Выбираем колонки в зависимости от режима
             if use_date_weight and "weight_sum" in df_standards.columns:
                 df_standards["Вес"] = df_standards["weight_sum"].round(2)
                 df_standards = df_standards[["designation", "name", "Вес", "Частота", "Рекомендован"]]
                 df_standards.columns = ["Обозначение", "Наименование", "Вес", "Частота", "Рекомендован"]
             else:
-                # Считаем count (сколько раз встретился стандарт)
                 if "count" not in df_standards.columns and "weight_sum" in df_standards.columns:
-                    # Если есть weight_sum, но нет count — используем weight_sum как count (при выключенном весе они равны количеству)
                     df_standards["Кол-во"] = df_standards["weight_sum"].round(0).astype(int)
                 else:
                     df_standards["Кол-во"] = df_standards.get("count", 0)
@@ -189,30 +203,24 @@ def main():
             st.dataframe(
                 df_standards,
                 use_container_width=True,
-                hide_index=True,
-                column_config={
-                    "Обозначение": st.column_config.TextColumn(width="medium"),
-                    "Наименование": st.column_config.TextColumn(width="large"),
-                    "Кол-во": st.column_config.NumberColumn(width="small"),
-                    "Частота": st.column_config.TextColumn(width="small"),
-                    "Рекомендован": st.column_config.CheckboxColumn(width="small"),
-                }
+                hide_index=True
             )
 
-            # Итоговый список рекомендованных
             st.markdown("---")
             st.markdown(f"### ✅ Рекомендованные стандарты (частота ≥ {frequency_threshold:.0%})")
 
             if recommended:
                 for s in recommended:
-                    st.markdown(f"- **{s['designation']}** — {s['name']} *(встречается в {s['frequency']:.1%} сертификатов)*")
+                    st.markdown(
+                        f"- **{s['designation']}** — {s['name']} *(встречается в {s['frequency']:.1%} сертификатов)*")
             else:
                 st.info(f"Нет стандартов с частотой ≥ {frequency_threshold:.0%}")
 
         else:
             st.error(result["message"])
             if result.get("certificates_count", 0) > 0:
-                st.info(f"💡 Всего найдено похожих сертификатов: {result['certificates_count']}, но они отфильтрованы. Попробуйте убрать фильтры.")
+                st.info(
+                    f"💡 Всего найдено похожих сертификатов: {result['certificates_count']}, но они отфильтрованы. Попробуйте убрать фильтры.")
 
     elif search_clicked and not product_query:
         st.warning("Введите описание продукции")

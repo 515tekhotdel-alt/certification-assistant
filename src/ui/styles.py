@@ -1,75 +1,63 @@
 """
-CSS-стили для приложения
+CSS стили для приложения
 """
 
-def get_reg_button_styles() -> str:
-    """Возвращает CSS для кнопок выбора регламентов"""
-    return """
-    <style>
-    .reg-btn-both {
-        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-        color: white;
-        font-weight: bold;
-        border: none;
-        border-radius: 12px;
-        padding: 12px 8px;
-        text-align: center;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        transition: transform 0.2s;
-    }
-    .reg-btn-004 {
-        background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
-        color: white;
-        font-weight: bold;
-        border: none;
-        border-radius: 12px;
-        padding: 12px 8px;
-        text-align: center;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        transition: transform 0.2s;
-    }
-    .reg-btn-020 {
-        background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
-        color: white;
-        font-weight: bold;
-        border: none;
-        border-radius: 12px;
-        padding: 12px 8px;
-        text-align: center;
-        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
-        transition: transform 0.2s;
-    }
-    .reg-btn-inactive {
-        background: #e0e0e0;
-        color: #888;
-        font-weight: normal;
-        border: none;
-        border-radius: 12px;
-        padding: 12px 8px;
-        text-align: center;
-        opacity: 0.6;
-    }
-    </style>
-    """
+import streamlit as st
 
-def get_global_styles() -> str:
-    """Возвращает глобальные CSS-стили"""
-    return """
+
+def apply_styles():
+    """Применяет все стили к приложению"""
+    st.markdown("""
     <style>
-    .stButton > button {
-        border-radius: 12px !important;
-        font-weight: 500 !important;
-        transition: all 0.2s !important;
-    }
-    .stButton > button:hover {
-        transform: scale(1.02) !important;
-        box-shadow: 0 6px 12px rgba(0,0,0,0.15) !important;
-    }
-    .metric-card {
-        background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
-        border-radius: 16px;
-        padding: 16px;
-        margin: 8px 0;
-    }
+        /* Общие стили для radio */
+        div[data-testid="stRadio"] label {
+            padding: 12px 16px !important;
+            border-radius: 14px !important;
+            margin-bottom: 10px !important;
+            transition: all 0.3s ease !important;
+            font-weight: 500 !important;
+            font-size: 15px !important;
+        }
+
+        /* ВЫБОР РЕГЛАМЕНТОВ — градиенты */
+        /* Оба регламента — фиолетовый */
+        div[role="radiogroup"][aria-label="🔍 Выберите вариант фильтрации:"] label:has(input[value="0"]:checked) {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
+            color: white !important;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4) !important;
+        }
+
+        /* Только 004 — розовый */
+        div[role="radiogroup"][aria-label="🔍 Выберите вариант фильтрации:"] label:has(input[value="1"]:checked) {
+            background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%) !important;
+            color: white !important;
+            box-shadow: 0 4px 15px rgba(240, 147, 251, 0.4) !important;
+        }
+
+        /* Только 020 — голубой */
+        div[role="radiogroup"][aria-label="🔍 Выберите вариант фильтрации:"] label:has(input[value="2"]:checked) {
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%) !important;
+            color: white !important;
+            box-shadow: 0 4px 15px rgba(79, 172, 254, 0.4) !important;
+        }
+
+        /* При наведении */
+        div[data-testid="stRadio"] label:hover {
+            background: rgba(102, 126, 234, 0.08) !important;
+        }
+
+        /* Компактные заголовки */
+        h1, h2, h3, h4 {
+            margin: 10px 0px 5px 0px !important;
+        }
+
+        hr {
+            margin: 8px 0px !important;
+        }
+
+        /* Скрываем меню справа сверху */
+        [data-testid="stMainMenu"] {
+            display: none !important;
+        }
     </style>
-    """
+    """, unsafe_allow_html=True)
