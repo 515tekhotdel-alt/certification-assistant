@@ -10,6 +10,10 @@ sys.path.append(str(Path(__file__).parent.parent))
 
 import streamlit as st
 import pandas as pd
+from io import BytesIO
+import streamlit.components.v1 as components
+
+
 
 from src.services.classifier import CertificationAssistant
 from src.ui.styles import apply_styles
@@ -124,66 +128,85 @@ def main():
                 recommended = [s for s in result["standards"] if s["frequency"] >= frequency_threshold]
                 st.metric("✅ Рекомендовано стандартов", len(recommended))
 
-            with st.expander("📋 Примеры найденной продукции", expanded=False):
+            with st.expander("📋 Примеры найденной продукции"):
                 for p in result["products_sample"]:
                     st.write(f"• {p}")
 
-
             st.markdown("---")
-            st.markdown("### 📋 Выберите подходящие модели продукции")
-            st.caption("По умолчанию выбраны все. Снимите галочки с неподходящих моделей.")
 
             all_found_products = result.get("filtered_products_sample", result.get("all_products_sample", []))
 
-            col_all, col_none = st.columns(2)
-            with col_all:
-                if st.button("✅ Выбрать все", key=f"select_all_{product_query}", use_container_width=True):
-                    for i in range(len(all_found_products)):
-                        st.session_state[f"product_cb_{product_query}_{i}"] = True
-                    st.rerun()
-            with col_none:
-                if st.button("❌ Убрать все", key=f"select_none_{product_query}", use_container_width=True):
-                    for i in range(len(all_found_products)):
-                        st.session_state[f"product_cb_{product_query}_{i}"] = False
-                    st.rerun()
+            with st.expander(f"📋 Выберите подходящие модели продукции ({len(all_found_products)} шт.)", expanded=False):
+                st.caption("По умолчанию выбраны все. Снимите галочки с неподходящих моделей.")
 
-            with st.container():
-                selected_products = []
-                for i, product in enumerate(all_found_products):
-                    key = f"product_cb_{product_query}_{i}"
-
-                    if key not in st.session_state:
-                        st.session_state[key] = True
-
-                    checked = st.checkbox(product, key=key)
-
-                    if checked:
-                        selected_products.append(product)
-
-            st.caption(f"Выбрано: {len(selected_products)} из {len(all_found_products)}")
-
-            if st.button("🔄 Пересчитать стандарты по выбранным моделям",
-                         key=f"recalc_{product_query}",
-                         type="secondary"):
-                if selected_products:
-                    new_result = assistant.recalculate_with_selected(
-                        selected_products,
-                        use_date_weight=use_date_weight
-                    )
-                    if new_result:
-                        st.session_state.last_result = new_result
+                col_all, col_none = st.columns(2)
+                with col_all:
+                    if st.button("✅ Выбрать все", key=f"select_all_{product_query}", use_container_width=True):
+                        for i in range(len(all_found_products)):
+                            st.session_state[f"product_cb_{product_query}_{i}"] = True
                         st.rerun()
+                with col_none:
+                    if st.button("❌ Убрать все", key=f"select_none_{product_query}", use_container_width=True):
+                        for i in range(len(all_found_products)):
+                            st.session_state[f"product_cb_{product_query}_{i}"] = False
+                        st.rerun()
+
+                with st.container():
+                    selected_products = []
+                    for i, product in enumerate(all_found_products):
+                        key = f"product_cb_{product_query}_{i}"
+
+                        if key not in st.session_state:
+                            st.session_state[key] = True
+
+                        checked = st.checkbox(product, key=key)
+
+                        if checked:
+                            selected_products.append(product)
+
+                st.caption(f"Выбрано: {len(selected_products)} из {len(all_found_products)}")
+
+                if st.button("🔄 Пересчитать стандарты по выбранным моделям",
+                             key=f"recalc_{product_query}",
+                             type="secondary"):
+                    if selected_products:
+                        new_result = assistant.recalculate_with_selected(
+                            selected_products,
+                            use_date_weight=use_date_weight
+                        )
+                        if new_result:
+                            st.session_state.last_result = new_result
+                            st.rerun()
+                        else:
+                            st.warning("Не удалось пересчитать. Попробуйте снова.")
                     else:
-                        st.warning("Не удалось пересчитать. Попробуйте снова.")
-                else:
-                    st.warning("Выберите хотя бы одну модель.")
+                        st.warning("Выберите хотя бы одну модель.")
+
+
 
             st.markdown("---")
             st.markdown("### 📊 Стандарты и частота их применения")
 
+            # Фиксированная светлая тема для таблицы
+            is_dark = False
+
+            if is_dark:
+                bg_color = "#0E1117"
+                text_color = "#FAFAFA"
+                th_bg = "#2e2e2e"
+                th_border = "#444"
+                td_border = "#333"
+            else:
+                bg_color = "#FFFFFF"
+                text_color = "#262730"
+                th_bg = "#f0f2f6"
+                th_border = "#ddd"
+                td_border = "#eee"
+
             df_standards = pd.DataFrame(result["standards"])
             df_standards["Частота"] = df_standards["frequency"].apply(lambda x: f"{x:.1%}")
             df_standards["Рекомендован"] = df_standards["frequency"] >= frequency_threshold
+            df_standards["Рекомендован"] = df_standards["Рекомендован"].map({True: "✅", False: "❓"})
 
             if use_date_weight and "weight_sum" in df_standards.columns:
                 df_standards["Вес"] = df_standards["weight_sum"].round(2)
@@ -197,10 +220,83 @@ def main():
                 df_standards = df_standards[["designation", "name", "Кол-во", "Частота", "Рекомендован"]]
                 df_standards.columns = ["Обозначение", "Наименование", "Кол-во", "Частота", "Рекомендован"]
 
-            st.dataframe(
-                df_standards,
-                use_container_width=True,
-                hide_index=True
+            # Функция для генерации HTML-таблицы
+            def dataframe_to_html_with_wrap(df):
+                html = df.to_html(index=False, escape=False, border=0, classes="dataframe")
+                style = f"""
+                <style>
+                    body {{
+                        font-family: 'Source Sans Pro', sans-serif;
+                        margin: 0;
+                        padding: 0;
+                        background-color: {bg_color};
+                    }}
+                    .dataframe {{
+                        width: 100%;
+                        border-collapse: collapse;
+                        font-size: 14px;
+                        color: {text_color};
+                    }}
+                    .dataframe th {{
+                        background-color: {th_bg};
+                        font-weight: 600;
+                        text-align: left;
+                        padding: 10px 8px;
+                        border-bottom: 2px solid {th_border};
+                        color: {text_color};
+                    }}
+                    .dataframe td {{
+                        text-align: left;
+                        padding: 8px;
+                        border-bottom: 1px solid {td_border};
+                        vertical-align: top;
+                        white-space: normal !important;
+                        word-wrap: break-word !important;
+                        word-break: break-word !important;
+                        color: {text_color};
+                    }}
+                    .dataframe td:nth-child(2) {{
+                        max-width: 600px;
+                    }}
+                    .dataframe td:nth-child(3) {{
+                    min-width: 80px;
+                    }}
+                </style>
+                """
+                return style + html
+
+            html_table = dataframe_to_html_with_wrap(df_standards)
+            import streamlit.components.v1 as components
+            components.html(html_table, height=35 * (len(df_standards) + 2), scrolling=True)
+
+            output = BytesIO()
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df_standards.to_excel(writer, index=False, sheet_name='Стандарты')
+
+                worksheet = writer.sheets['Стандарты']
+
+                # Настройка переноса текста и автоширины
+                from openpyxl.styles import Alignment
+
+                for column in worksheet.columns:
+                    max_length = 0
+                    column_letter = column[0].column_letter
+                    for cell in column:
+                        # Включаем перенос текста для всех ячеек
+                        cell.alignment = Alignment(wrap_text=True, vertical='top')
+                        try:
+                            if len(str(cell.value)) > max_length:
+                                max_length = len(str(cell.value))
+                        except:
+                            pass
+                    adjusted_width = min(max_length + 2, 60)
+                    worksheet.column_dimensions[column_letter].width = adjusted_width
+
+            st.download_button(
+                label="📥 Скачать таблицу (Excel)",
+                data=output.getvalue(),
+                file_name=f"standards_{product_query.replace(' ', '_')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
             )
 
             st.markdown("---")
