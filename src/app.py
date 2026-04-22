@@ -128,9 +128,6 @@ def main():
                 for p in result["products_sample"]:
                     st.write(f"• {p}")
 
-            if result["regulations"]:
-                st.markdown("**📜 Технические регламенты (в найденных сертификатах):**")
-                st.write(", ".join(result["regulations"]))
 
             st.markdown("---")
             st.markdown("### 📋 Выберите подходящие модели продукции")
