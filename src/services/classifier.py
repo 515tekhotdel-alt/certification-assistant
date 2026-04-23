@@ -27,6 +27,36 @@ class CertificationAssistant:
         self._last_matched_rows = None
         self._last_query = None
 
+    def _find_relevant_locally(self, query: str, products: list, top_n: int = 30) -> list:
+        """
+        Локальный поиск кандидатов по словам запроса.
+        НЕ использует DeepSeek API, работает полностью офлайн.
+        """
+        query_words = [word for word in query.lower().split() if len(word) >= 3]
+        if not query_words:
+            query_words = [query.lower()]
+
+        scored = []
+        for idx, product in enumerate(products):
+            if not product:
+                continue
+            product_lower = str(product).lower()
+            score = 0
+            for word in query_words:
+                if word in product_lower:
+                    score += 1
+            if query.lower() in product_lower:
+                score += 2
+            if score > 0:
+                scored.append({
+                    "index": idx,
+                    "product": product,
+                    "confidence": min(score / (len(query_words) + 2), 1.0)
+                })
+
+        scored.sort(key=lambda x: x["confidence"], reverse=True)
+        return scored[:top_n]
+
     def _get_year_weight(self, date_str, use_weight: bool = False) -> float:
         if not use_weight:
             return 1.0
@@ -40,8 +70,7 @@ class CertificationAssistant:
 
     def process_query(self, product_query: str, regulation: str = "", tnved: str = "",
                       use_date_weight: bool = False) -> dict:
-        relevant_indices = self.deepseek.find_relevant_indices(product_query, self.all_products)
-
+        relevant_indices = self._find_relevant_locally(product_query, self.all_products)
         if not relevant_indices:
             return {
                 "found": False, "source": "none",
