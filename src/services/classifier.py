@@ -8,6 +8,8 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).parent.parent.parent))
 
 import pandas as pd
+
+import streamlit as st
 from collections import Counter
 from datetime import datetime
 
@@ -69,8 +71,23 @@ class CertificationAssistant:
         return weights.get(year, 0.4)
 
     def process_query(self, product_query: str, regulation: str = "", tnved: str = "",
-                      use_date_weight: bool = False) -> dict:
-        relevant_indices = self._find_relevant_locally(product_query, self.all_products)
+                      use_date_weight: bool = False, use_ai: bool = False) -> dict:
+        # Шаг 1: поиск релевантных индексов
+        if use_ai:
+            # Умный поиск: DeepSeek + локальный
+            print("🔵 DEEPSEEK ВЫЗВАН")  # ← отладка
+            progress_bar = st.progress(0)
+            status_text = st.empty()
+            relevant_indices = self.deepseek.find_in_full_base(product_query, self.all_products, progress_bar, status_text)
+            print(f"🔵 DeepSeek вернул: {len(relevant_indices)} результатов")
+            if not relevant_indices:
+                relevant_indices = self._find_relevant_locally(product_query, self.all_products)
+        else:
+            # Только локальный поиск
+            print("🟢 ЛОКАЛЬНЫЙ ПОИСК")
+            relevant_indices = self._find_relevant_locally(product_query, self.all_products)
+            print(f"🟢 Локальный вернул: {len(relevant_indices)} результатов")
+
         if not relevant_indices:
             return {
                 "found": False, "source": "none",
@@ -85,6 +102,10 @@ class CertificationAssistant:
         matched_rows = self.df.iloc[indices].copy()
         matched_rows["_match_confidence"] = [r["confidence"] for r in relevant_indices]
         matched_rows["_original_index"] = indices
+        # Очистка кавычек из текстовых колонок
+        for col in [COLUMN_MAPPING["product"], COLUMN_MAPPING["standards_designation"], COLUMN_MAPPING["standards_name"]]:
+            if col in matched_rows.columns:
+                matched_rows[col] = matched_rows[col].astype(str).str.replace('"', '')
 
         if regulation:
             if regulation == "both":
@@ -101,6 +122,10 @@ class CertificationAssistant:
                     return ("ТР ТС 004/2011" in val_str) and ("ТР ТС 020/2011" not in val_str)
 
                 matched_rows = matched_rows[matched_rows[COLUMN_MAPPING["regulations"]].apply(check_004_only)]
+                # ОТЛАДКА: показываем первые 5 прошедших и их регламенты
+                print(f"🔴 [ОТЛАДКА 004_only] Прошло фильтр: {len(matched_rows)} строк")
+                for i, (_, row) in enumerate(matched_rows.head(5).iterrows()):
+                    print(f"   {row[COLUMN_MAPPING['product']][:60]}... → {row[COLUMN_MAPPING['regulations']]}")
             elif regulation == "020_only":
                 def check_020_only(val):
                     if pd.isna(val): return False
@@ -108,6 +133,10 @@ class CertificationAssistant:
                     return ("ТР ТС 020/2011" in val_str) and ("ТР ТС 004/2011" not in val_str)
 
                 matched_rows = matched_rows[matched_rows[COLUMN_MAPPING["regulations"]].apply(check_020_only)]
+                # ОТЛАДКА: показываем первые 5 прошедших и их регламенты
+                print(f"🔴 [ОТЛАДКА 020_only] Прошло фильтр: {len(matched_rows)} строк")
+                for i, (_, row) in enumerate(matched_rows.head(5).iterrows()):
+                    print(f"   {row[COLUMN_MAPPING['product']][:60]}... → {row[COLUMN_MAPPING['regulations']]}")
 
         if tnved and len(tnved) >= 4:
             matched_rows = matched_rows[
@@ -189,7 +218,7 @@ class CertificationAssistant:
             total_weight += weight
 
             des_str = str(row[des_col]) if pd.notna(row[des_col]) else ""
-            name_str = str(row[name_col]) if pd.notna(row[name_col]) else ""
+            name_str = str(row[name_col]).strip('"') if pd.notna(row[name_col]) else ""
 
             des_list = [d.strip() for d in des_str.split(";") if d.strip()]
             name_list = [n.strip() for n in name_str.split(";") if n.strip()]

@@ -20,22 +20,22 @@ def apply_styles():
         }
 
         /* ВЫБОР РЕГЛАМЕНТОВ — градиенты */
-        /* Оба регламента — фиолетовый */
-        div[role="radiogroup"][aria-label="🔍 Выберите вариант фильтрации:"] label:has(input[value="0"]:checked) {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%) !important;
-            color: white !important;
-            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4) !important;
+        /* Оба регламента — насыщенный фиолетовый */
+        div[role="radiogroup"] label:has(input[value="0"]:checked) {
+            background: linear-gradient(135deg, #b8a9d4 0%, #9b8ec4 100%) !important;
+            color: #1a1a1a !important;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3) !important;
         }
 
         /* Только 004 — розовый */
-        div[role="radiogroup"][aria-label="🔍 Выберите вариант фильтрации:"] label:has(input[value="1"]:checked) {
+        div[role="radiogroup"] label:has(input[value="1"]:checked) {
             background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%) !important;
             color: white !important;
             box-shadow: 0 4px 15px rgba(240, 147, 251, 0.4) !important;
         }
 
         /* Только 020 — голубой */
-        div[role="radiogroup"][aria-label="🔍 Выберите вариант фильтрации:"] label:has(input[value="2"]:checked) {
+        div[role="radiogroup"] label:has(input[value="2"]:checked) {
             background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%) !important;
             color: white !important;
             box-shadow: 0 4px 15px rgba(79, 172, 254, 0.4) !important;

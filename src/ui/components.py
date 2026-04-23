@@ -12,9 +12,9 @@ def render_regulation_selector() -> str:
     Returns:
         str: режим фильтрации ('both', '004_only', '020_only')
     """
-    st.subheader("📜 Технические регламенты")
+    st.subheader("📑 Технические регламенты")
 
-    # Варианты с красивыми названиями и иконками
+    # Варианты для отображения и их внутренние значения
     reg_options = ["both", "004_only", "020_only"]
     reg_display = [
         "📋 Оба регламента (ТР ТС 004/2011 + ТР ТС 020/2011)",
@@ -22,24 +22,19 @@ def render_regulation_selector() -> str:
         "📡 Только ТР ТС 020/2011 (без ТР ТС 004/2011)"
     ]
 
-    # Инициализация состояния
-    if "reg_mode" not in st.session_state:
-        st.session_state.reg_mode = "both"
+    # Инициализация индекса по умолчанию (0 = "both")
+    if "reg_index" not in st.session_state:
+        st.session_state.reg_index = 0
 
-    current_index = reg_options.index(st.session_state.reg_mode)
-
+    # Ключ для radio теперь постоянный и привязан к session_state
     selected_index = st.radio(
-        "🔍 Выберите вариант фильтрации:",
+        " ",
         options=range(len(reg_options)),
         format_func=lambda i: reg_display[i],
-        index=current_index,
-        key="regulation_radio"
+        index=st.session_state.reg_index,
+        key="##regulation_radio"  # Уникальный ключ, который не меняется
     )
 
-    selected_mode = reg_options[selected_index]
-
-    if selected_mode != st.session_state.reg_mode:
-        st.session_state.reg_mode = selected_mode
-        st.rerun()
-
-    return selected_mode
+    # Сохраняем выбранный индекс и возвращаем соответствующее значение
+    st.session_state.reg_index = selected_index
+    return reg_options[selected_index]

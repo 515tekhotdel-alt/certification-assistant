@@ -33,3 +33,6 @@ COLUMN_MAPPING = {
     "standards_designation": "Обозначение стандарта, нормативного документа",
     "standards_name": "Наименование стандарта, нормативного документа"
 }
+
+# Пароль для умного поиска
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "admin123")

@@ -11,9 +11,8 @@ sys.path.append(str(Path(__file__).parent.parent))
 import streamlit as st
 import pandas as pd
 from io import BytesIO
+import os
 import streamlit.components.v1 as components
-
-
 
 from src.services.classifier import CertificationAssistant
 from src.ui.styles import apply_styles
@@ -41,17 +40,9 @@ def main():
         assistant = get_assistant()
 
     with st.sidebar:
-        st.header("🔍 Фильтры")
-
         from src.ui.components import render_regulation_selector
-        reg_mode = render_regulation_selector()
-
-        if reg_mode == "both":
-            regulation_filter = "both"
-        elif reg_mode == "only_004":
-            regulation_filter = "004_only"
-        else:
-            regulation_filter = "020_only"
+        reg_mode = render_regulation_selector().strip()
+        regulation_filter = reg_mode
 
         st.divider()
 
@@ -75,14 +66,70 @@ def main():
             st.caption("• 2024 → 0.6")
             st.caption("• 2023 и старше → 0.4")
 
-        st.divider()
+        frequency_threshold = 0.5
 
-        st.subheader("📊 Порог рекомендации")
-        frequency_threshold = st.slider(
-            "Минимальная частота",
-            min_value=0.3, max_value=1.0, value=0.5, step=0.05,
-            help="Стандарты с частотой выше этого порога считаются рекомендованными"
-        )
+        st.divider()
+        st.subheader("🤖 Умный поиск (DeepSeek)")
+
+        if "ai_enabled" not in st.session_state:
+            st.session_state.ai_enabled = False
+        if "show_password" not in st.session_state:
+            st.session_state.show_password = False
+        if "error_msg" not in st.session_state:
+            st.session_state.error_msg = ""
+
+        col1, col2 = st.columns(2)
+        with col1:
+            if st.button("🤖 Вкл.", disabled=st.session_state.ai_enabled, use_container_width=True):
+                st.session_state.show_password = True
+                st.session_state.error_msg = ""
+                st.rerun()
+        with col2:
+            if st.button("🚫 Откл.", disabled=not st.session_state.ai_enabled, use_container_width=True):
+                st.session_state.ai_enabled = False
+                st.session_state.show_password = False
+                st.session_state.error_msg = ""
+                st.rerun()
+
+        if st.session_state.show_password and not st.session_state.ai_enabled:
+            with st.form(key="password_form"):
+                ai_password = st.text_input("Введите пароль", type="password", key="ai_pass_input")
+                col_ok, col_cancel = st.columns(2)
+                with col_ok:
+                    ok_btn = st.form_submit_button("✅ ОК", use_container_width=True)
+                with col_cancel:
+                    cancel_btn = st.form_submit_button("❌ Отмена", use_container_width=True)
+
+                if ok_btn:
+                    if ai_password == os.getenv("ADMIN_PASSWORD", "admin123"):
+                        st.session_state.ai_enabled = True
+                        st.session_state.show_password = False
+                        st.session_state.error_msg = ""
+                    else:
+                        st.session_state.show_password = False
+                        st.session_state.error_msg = "❌ Неверный пароль"
+                    st.rerun()
+
+                if cancel_btn:
+                    st.session_state.show_password = False
+                    st.rerun()
+
+        if st.session_state.error_msg:
+            st.error(st.session_state.error_msg)
+        if st.session_state.ai_enabled:
+            st.success("🤖 Умный поиск активен")
+
+            try:
+                balance_data = assistant.deepseek.check_balance()
+                if balance_data.get("is_available"):
+                    for info in balance_data.get("balance_infos", []):
+                        total = info.get("total_balance", "0.00")
+                        currency = info.get("currency", "USD")
+                        st.caption(f"💰 Баланс: {total} {currency}")
+            except:
+                pass
+
+        use_ai = st.session_state.ai_enabled
 
         st.divider()
         st.caption(f"📊 В базе: {len(assistant.df):,} сертификатов")
@@ -101,11 +148,11 @@ def main():
                 product_query,
                 regulation=regulation_filter,
                 tnved=tnved,
-                use_date_weight=use_date_weight
+                use_date_weight=use_date_weight,
+                use_ai=st.session_state.ai_enabled
             )
             st.session_state.last_result = result
             st.session_state.last_query = product_query
-
 
     if "last_result" in st.session_state:
         result = st.session_state.last_result
@@ -182,26 +229,8 @@ def main():
                     else:
                         st.warning("Выберите хотя бы одну модель.")
 
-
-
             st.markdown("---")
             st.markdown("### 📊 Стандарты и частота их применения")
-
-            # Фиксированная светлая тема для таблицы
-            is_dark = False
-
-            if is_dark:
-                bg_color = "#0E1117"
-                text_color = "#FAFAFA"
-                th_bg = "#2e2e2e"
-                th_border = "#444"
-                td_border = "#333"
-            else:
-                bg_color = "#FFFFFF"
-                text_color = "#262730"
-                th_bg = "#f0f2f6"
-                th_border = "#ddd"
-                td_border = "#eee"
 
             df_standards = pd.DataFrame(result["standards"])
             df_standards["Частота"] = df_standards["frequency"].apply(lambda x: f"{x:.1%}")
@@ -220,7 +249,6 @@ def main():
                 df_standards = df_standards[["designation", "name", "Кол-во", "Частота", "Рекомендован"]]
                 df_standards.columns = ["Обозначение", "Наименование", "Кол-во", "Частота", "Рекомендован"]
 
-            # Функция для генерации HTML-таблицы
             def dataframe_to_html_with_wrap(df):
                 html = df.to_html(index=False, escape=False, border=0, classes="dataframe")
                 style = f"""
@@ -229,44 +257,43 @@ def main():
                         font-family: 'Source Sans Pro', sans-serif;
                         margin: 0;
                         padding: 0;
-                        background-color: {bg_color};
+                        background-color: #FFFFFF;
                     }}
                     .dataframe {{
                         width: 100%;
                         border-collapse: collapse;
                         font-size: 14px;
-                        color: {text_color};
+                        color: #262730;
                     }}
                     .dataframe th {{
-                        background-color: {th_bg};
+                        background-color: #f0f2f6;
                         font-weight: 600;
                         text-align: left;
                         padding: 10px 8px;
-                        border-bottom: 2px solid {th_border};
-                        color: {text_color};
+                        border-bottom: 2px solid #ddd;
+                        color: #262730;
                     }}
                     .dataframe td {{
                         text-align: left;
                         padding: 8px;
-                        border-bottom: 1px solid {td_border};
+                        border-bottom: 1px solid #eee;
                         vertical-align: top;
                         white-space: normal !important;
                         word-wrap: break-word !important;
                         word-break: break-word !important;
-                        color: {text_color};
+                        color: #262730;
                     }}
                     .dataframe td:nth-child(2) {{
                         max-width: 600px;
                     }}
                     .dataframe td:nth-child(3) {{
-                    min-width: 80px;
+                        min-width: 80px;
                     }}
                 </style>
                 """
                 return style + html
 
             html_table = dataframe_to_html_with_wrap(df_standards)
-            import streamlit.components.v1 as components
             components.html(html_table, height=35 * (len(df_standards) + 2), scrolling=True)
 
             output = BytesIO()
@@ -275,14 +302,12 @@ def main():
 
                 worksheet = writer.sheets['Стандарты']
 
-                # Настройка переноса текста и автоширины
                 from openpyxl.styles import Alignment
 
                 for column in worksheet.columns:
                     max_length = 0
                     column_letter = column[0].column_letter
                     for cell in column:
-                        # Включаем перенос текста для всех ячеек
                         cell.alignment = Alignment(wrap_text=True, vertical='top')
                         try:
                             if len(str(cell.value)) > max_length:

@@ -25,21 +25,13 @@ class DeepSeekClient:
     def find_relevant_indices(self, query: str, products: list) -> list:
         """
         Находит ВСЕ индексы продуктов, соответствующих запросу.
-
-        Args:
-            query: поисковый запрос
-            products: полный список наименований продукции (9492 строки)
-
-        Returns:
-            list of dict: [{"index": int, "product": str, "confidence": float}, ...]
+        Использует локальный отбор 30 кандидатов + DeepSeek.
         """
-        # Шаг 1: локальный отбор кандидатов по ключевым словам (быстрый фильтр)
         candidates = self._get_candidates_by_keywords(query, products, top_n=30)
 
         if not candidates:
             return []
 
-        # Шаг 2: отправляем кандидатов в DeepSeek для точного отбора
         prompt = self._build_batch_prompt(query, candidates)
 
         try:
@@ -61,14 +53,86 @@ class DeepSeekClient:
             if response.status_code == 200:
                 result = response.json()
                 answer = result["choices"][0]["message"]["content"]
+                tokens = result.get("usage", {})
+                print(
+                    f"🔵 [DEEPSEEK] Токенов: вход={tokens.get('prompt_tokens')}, выход={tokens.get('completion_tokens')}")
                 return self._parse_batch_response(answer, candidates)
             else:
-                print(f"❌ DeepSeek API error: {response.status_code}")
+                print(f"❌ DeepSeek API error: {response.status_code} - {response.text[:200]}")
                 return []
 
         except Exception as e:
             print(f"❌ DeepSeek request error: {e}")
             return []
+
+    def find_in_full_base(self, query: str, products: list, progress_bar=None, status_text=None) -> list:
+        """
+        Отправляет в DeepSeek ВСЕ названия продукции для поиска.
+        С таймаутом 60 секунд.
+        """
+
+        import time
+
+        batch_size = 500
+        timeout = 90  # секунд
+        start_time = time.time()
+
+        total_batches = (len(products) - 1) // batch_size + 1
+        print(f"\n🔵 [DEEPSEEK FULL] Запрос: '{query}'")
+        print(f"🔵 [DEEPSEEK FULL] Всего продуктов: {len(products)}")
+        print(f"🔵 [DEEPSEEK FULL] Всего батчей: {total_batches}")
+
+        all_results = []
+
+        for i in range(0, len(products), batch_size):
+            # Таймаут
+            if time.time() - start_time > timeout:
+                print(f"⏰ Таймаут ({timeout}с), найдено: {len(all_results)}")
+                break
+
+            batch = products[i:i + batch_size]
+            candidates = [(i + j, p) for j, p in enumerate(batch)]
+            prompt = self._build_batch_prompt(query, candidates)
+
+            batch_num = i // batch_size + 1
+            print(f"🔵 [DEEPSEEK FULL] Батч {batch_num}/{total_batches}...")
+            if progress_bar is not None and status_text is not None:
+                progress = min((i + len(batch)) / len(products), 1.0)
+                progress_bar.progress(progress)
+                status_text.text(f"🔵 Умный поиск: {i + len(batch)} из {len(products)}")
+
+            try:
+                response = requests.post(
+                    self.base_url,
+                    headers={
+                        "Authorization": f"Bearer {self.api_key}",
+                        "Content-Type": "application/json"
+                    },
+                    json={
+                        "model": self.model,
+                        "messages": [{"role": "user", "content": prompt}],
+                        "temperature": 0.1,
+                        "max_tokens": 500
+                    },
+                    timeout=45
+                )
+
+                if response.status_code == 200:
+                    result = response.json()
+                    answer = result["choices"][0]["message"]["content"]
+                    tokens = result.get("usage", {})
+                    print(
+                        f"🔵 [DEEPSEEK FULL] Батч {batch_num}: вход={tokens.get('prompt_tokens')}, выход={tokens.get('completion_tokens')}")
+                    batch_results = self._parse_batch_response(answer, candidates)
+                    all_results.extend(batch_results)
+                else:
+                    print(f"❌ DeepSeek API error: {response.status_code}")
+
+            except Exception as e:
+                print(f"❌ DeepSeek request error: {e}")
+
+        print(f"🔵 [DEEPSEEK FULL] Всего найдено: {len(all_results)}")
+        return all_results
 
     def _get_candidates_by_keywords(self, query: str, products: list, top_n: int = 30) -> list:
         """Быстрый локальный отбор по ключевым словам"""
@@ -90,7 +154,6 @@ class DeepSeekClient:
         """Промпт для отбора всех подходящих вариантов"""
         lines = []
         for i, (_, product) in enumerate(candidates):
-            # Обрезаем длинные названия для читаемости
             short_product = product[:80] + "..." if len(product) > 80 else product
             lines.append(f"{i}: {short_product}")
 
@@ -107,7 +170,6 @@ class DeepSeekClient:
 
     def _parse_batch_response(self, answer: str, candidates: list) -> list:
         """Парсит ответ с массивом индексов"""
-        # Ищем JSON-массив в ответе
         match = re.search(r'\[.*?\]', answer, re.DOTALL)
         if match:
             try:
@@ -125,10 +187,9 @@ class DeepSeekClient:
             except json.JSONDecodeError:
                 pass
 
-        # Если не получилось распарсить JSON, ищем отдельные числа
         numbers = re.findall(r'\b\d+\b', answer)
         results = []
-        for num in numbers[:10]:  # максимум 10
+        for num in numbers[:10]:
             i = int(num)
             if 0 <= i < len(candidates):
                 original_idx = candidates[i][0]
@@ -152,26 +213,3 @@ class DeepSeekClient:
         except:
             pass
         return {"is_available": False}
-
-
-# Тестирование
-if __name__ == "__main__":
-    from src.database.loader import DataLoader
-
-    loader = DataLoader()
-    products = loader.get_product_names()
-
-    client = DeepSeekClient()
-
-    # Проверка баланса
-    balance = client.check_balance()
-    print(f"💰 Баланс доступен: {balance.get('is_available', False)}")
-
-    # Тестовый запрос
-    query = "пылесос"
-    results = client.find_relevant_indices(query, products)
-
-    print(f"\n🔍 Запрос: '{query}'")
-    print(f"📊 Найдено релевантных строк: {len(results)}")
-    for r in results[:5]:
-        print(f"   - {r['product'][:60]}...")
