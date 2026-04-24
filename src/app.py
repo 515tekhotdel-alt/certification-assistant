@@ -46,7 +46,7 @@ def main():
 
         st.divider()
 
-        st.subheader("🔢 ТНВЭД")
+        st.subheader("🔢 ТНВЭД (опционально)")
         tnved = st.text_input(
             "Первые 4 цифры кода",
             placeholder="Например: 8508",
