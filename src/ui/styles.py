@@ -78,6 +78,10 @@ def apply_styles():
             background-color: rgba(128, 128, 128, 0.15);
             font-weight: 600;
         }
+                /* Скрываем верхнюю панель Streamlit (меню, футер, кнопку Deploy) */
+        header {visibility: hidden;}
+        footer {visibility: hidden;}
+        #MainMenu {visibility: hidden;}
         
     </style>
     """, unsafe_allow_html=True)
