@@ -59,5 +59,25 @@ def apply_styles():
         [data-testid="stMainMenu"] {
             display: none !important;
         }
+        
+                /* Таблица стандартов */
+        .indicator-results-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 14px;
+        }
+        .indicator-results-table th, .indicator-results-table td {
+            border: 1px solid rgba(128, 128, 128, 0.3);
+            padding: 8px;
+            text-align: left;
+            vertical-align: top;
+            white-space: normal;
+            word-wrap: break-word;
+        }
+        .indicator-results-table th {
+            background-color: rgba(128, 128, 128, 0.15);
+            font-weight: 600;
+        }
+        
     </style>
     """, unsafe_allow_html=True)

@@ -249,52 +249,9 @@ def main():
                 df_standards = df_standards[["designation", "name", "Кол-во", "Частота", "Рекомендован"]]
                 df_standards.columns = ["Обозначение", "Наименование", "Кол-во", "Частота", "Рекомендован"]
 
-            def dataframe_to_html_with_wrap(df):
-                html = df.to_html(index=False, escape=False, border=0, classes="dataframe")
-                style = f"""
-                <style>
-                    body {{
-                        font-family: 'Source Sans Pro', sans-serif;
-                        margin: 0;
-                        padding: 0;
-                        background-color: #FFFFFF;
-                    }}
-                    .dataframe {{
-                        width: 100%;
-                        border-collapse: collapse;
-                        font-size: 14px;
-                        color: #262730;
-                    }}
-                    .dataframe th {{
-                        background-color: #f0f2f6;
-                        font-weight: 600;
-                        text-align: left;
-                        padding: 10px 8px;
-                        border-bottom: 2px solid #ddd;
-                        color: #262730;
-                    }}
-                    .dataframe td {{
-                        text-align: left;
-                        padding: 8px;
-                        border-bottom: 1px solid #eee;
-                        vertical-align: top;
-                        white-space: normal !important;
-                        word-wrap: break-word !important;
-                        word-break: break-word !important;
-                        color: #262730;
-                    }}
-                    .dataframe td:nth-child(2) {{
-                        max-width: 600px;
-                    }}
-                    .dataframe td:nth-child(3) {{
-                        min-width: 80px;
-                    }}
-                </style>
-                """
-                return style + html
+            html_table = df_standards.to_html(index=False, classes='indicator-results-table', escape=False)
+            st.markdown(html_table, unsafe_allow_html=True)
 
-            html_table = dataframe_to_html_with_wrap(df_standards)
-            components.html(html_table, height=35 * (len(df_standards) + 2), scrolling=True)
 
             output = BytesIO()
             with pd.ExcelWriter(output, engine='openpyxl') as writer:
