@@ -18,6 +18,17 @@ import streamlit.components.v1 as components
 from src.services.classifier import CertificationAssistant
 from src.ui.styles import apply_styles
 
+# Мгновенное скрытие верхней панели (до загрузки CSS)
+st.markdown("""
+<script>
+    (function() {
+        var el = window.parent.document.querySelector('header');
+        if (el) el.style.display = 'none';
+    })();
+</script>
+""", unsafe_allow_html=True)
+
+
 st.set_page_config(
     page_title="Помощник эксперта по сертификации",
     page_icon="📋",
