@@ -17,6 +17,9 @@ from src.database.loader import DataLoader
 from src.models.deepseek_client import DeepSeekClient
 from src.config import COLUMN_MAPPING
 
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="openpyxl")
+
 
 class CertificationAssistant:
     """Помощник эксперта по сертификации с анализом частоты стандартов"""
@@ -251,6 +254,45 @@ class CertificationAssistant:
                 if v.strip():
                     values.add(v.strip())
         return sorted(list(values))
+
+    def add_certificates(self, new_df: pd.DataFrame):
+        """
+        Добавляет новые сертификаты в основную базу.
+        Пропускает дубликаты по номеру сертификата.
+        Возвращает количество добавленных и отфильтрованных строк.
+        """
+        import os
+
+        # Приводим колонки к общему формату
+        for col in self.df.columns:
+            if col not in new_df.columns:
+                new_df[col] = ""
+
+
+        # Проверка на дубликаты по номеру сертификата
+        number_col = COLUMN_MAPPING["number"]
+        existing_numbers = set(self.df[number_col].dropna().astype(str))
+
+        # Фильтруем: оставляем только те, чьих номеров ещё нет в базе
+        new_df["_is_new"] = ~new_df[number_col].astype(str).isin(existing_numbers)
+        duplicates = len(new_df) - new_df["_is_new"].sum()
+        new_df = new_df[new_df["_is_new"]].drop(columns=["_is_new"])
+
+        if new_df.empty:
+            return 0, duplicates
+
+        # Добавляем к основному DataFrame
+        self.df = pd.concat([self.df, new_df], ignore_index=True)
+
+        # Сохраняем в Excel
+        from src.config import CERTIFICATES_FILE
+        self.df.to_excel(CERTIFICATES_FILE, index=False)
+
+        # Обновляем список продуктов
+        self.all_products = self.df[COLUMN_MAPPING["product"]].tolist()
+
+        return len(new_df), duplicates
+
 
     def get_source_label(self, source: str) -> tuple:
         labels = {

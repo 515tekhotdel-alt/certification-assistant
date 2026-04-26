@@ -12,6 +12,7 @@ import streamlit as st
 import pandas as pd
 from io import BytesIO
 import os
+from src.config import COLUMN_MAPPING
 import streamlit.components.v1 as components
 
 from src.services.classifier import CertificationAssistant
@@ -133,6 +134,82 @@ def main():
 
         st.divider()
         st.caption(f"📊 В базе: {len(assistant.df):,} сертификатов")
+
+        st.divider()
+        st.subheader("📥 Добавить сертификаты")
+
+        uploaded_file = st.file_uploader(
+            "Загрузите Excel-файл с новыми сертификатами",
+            type=["xlsx", "xls"],
+            key="cert_upload"
+        )
+
+        if uploaded_file is not None:
+            try:
+                new_df = pd.read_excel(uploaded_file)
+
+                # Проверка колонок
+                required_cols = [
+                    COLUMN_MAPPING["product"],  # Полное наименование продукции
+                    COLUMN_MAPPING["regulations"],  # Технический регламент
+                    COLUMN_MAPPING["standards_designation"],  # Обозначение стандарта
+                    COLUMN_MAPPING["number"],  # Номер сертификата — обязателен
+                ]
+
+                missing = [c for c in required_cols if c not in new_df.columns]
+
+                if missing:
+                    st.error(f"❌ В файле отсутствуют обязательные колонки: {', '.join(missing)}")
+                else:
+                    # Заполняем необязательные колонки
+                    if COLUMN_MAPPING["date"] not in new_df.columns:
+                        new_df[COLUMN_MAPPING["date"]] = pd.Timestamp.now()
+                    if COLUMN_MAPPING["attestation"] not in new_df.columns:
+                        new_df[COLUMN_MAPPING["attestation"]] = ""
+                    if COLUMN_MAPPING["tnved"] not in new_df.columns:
+                        new_df[COLUMN_MAPPING["tnved"]] = ""
+                    if COLUMN_MAPPING["standards_name"] not in new_df.columns:
+                        new_df[COLUMN_MAPPING["standards_name"]] = ""
+
+                    # Сохраняем во временную переменную
+                    st.session_state.uploaded_certificates = new_df
+                    st.success(f"✅ Загружено {len(new_df)} сертификатов. Нажмите 'Сохранить' для добавления в базу.")
+
+                    # Предпросмотр первых 5 строк
+                    with st.expander("📋 Предпросмотр загружаемых данных", expanded=True):
+                        st.dataframe(new_df.head(5), use_container_width=True)
+
+            except Exception as e:
+                st.error(f"❌ Ошибка при чтении файла: {e}")
+
+        # Кнопка сохранения с паролем
+        if "uploaded_certificates" in st.session_state and not st.session_state.uploaded_certificates.empty:
+            st.info(f"📋 Готово к добавлению: {len(st.session_state.uploaded_certificates)} сертификатов")
+
+            save_password = st.text_input("Пароль для сохранения", type="password", key="save_password")
+
+            if st.button("💾 Сохранить в основную базу", use_container_width=True, type="primary"):
+                if save_password == os.getenv("ADMIN_PASSWORD", "admin123"):
+                    try:
+                        count = len(st.session_state.uploaded_certificates)
+                        added, duplicates = assistant.add_certificates(st.session_state.uploaded_certificates)
+                        st.session_state.uploaded_certificates = None
+                        if duplicates > 0:
+                            st.session_state.save_message = f"✅ Добавлено {added} новых, пропущено {duplicates} дубликатов"
+                        else:
+                            st.session_state.save_message = f"✅ Успешно добавлено {added} сертификатов!"
+                    except Exception as e:
+                        st.session_state.save_message = f"❌ Ошибка при сохранении: {e}"
+                else:
+                    st.session_state.save_message = "❌ Неверный пароль"
+                st.rerun()
+
+        # Показываем сообщение о результате
+        if "save_message" in st.session_state and st.session_state.save_message:
+            if "Успешно" in st.session_state.save_message:
+                st.success(st.session_state.save_message)
+            else:
+                st.error(st.session_state.save_message)
 
     with st.form(key="search_form"):
         product_query = st.text_input(
