@@ -12,7 +12,8 @@ load_dotenv()
 # Пути к данным
 BASE_DIR = Path(__file__).parent.parent
 DATA_DIR = BASE_DIR / "data"
-CERTIFICATES_FILE = DATA_DIR / "certificates.xlsx"
+CERTIFICATES_FILE = DATA_DIR / "certificates.enc"
+ENCRYPTION_ENABLED = os.getenv("ENCRYPTION_KEY") is not None
 
 # API ключи
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
